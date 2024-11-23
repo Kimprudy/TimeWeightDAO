@@ -18,6 +18,7 @@
 (define-constant ERR_QUORUM_NOT_MET (err u108))
 (define-constant ERR_PROPOSAL_ALREADY_EXECUTED (err u109))
 (define-constant ERR_NO_VOTE_TO_CANCEL (err u110))
+(define-constant ERR_WITHDRAWAL_AMOUNT_EXCEEDS_BALANCE (err u111))
 
 (define-constant VOTING_PERIOD u144) ;; ~24 hours in blocks
 (define-constant MIN_PROPOSAL_THRESHOLD u100000000) ;; Minimum tokens needed to create proposal
@@ -59,14 +60,6 @@
     {power: uint, support: bool}
 )
 
-;; Administrative Functions
-(define-public (set-governance-token (new-token principal))
-    (begin
-        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
-        (ok (var-set governance-token (some new-token)))
-    )
-)
-
 ;; Private Functions
 (define-private (calculate-voting-power (user principal))
     (let (
@@ -94,6 +87,13 @@
 )
 
 ;; Public Functions
+(define-public (set-governance-token (new-token principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get contract-owner)) ERR_UNAUTHORIZED)
+        (ok (var-set governance-token (some new-token)))
+    )
+)
+
 (define-public (deposit-tokens (token-trait <governance-token-trait>) (amount uint))
     (let (
         (token (unwrap! (var-get governance-token) ERR_TOKEN_NOT_SET))
@@ -109,6 +109,29 @@
             {
                 amount: (+ (default-to u0 (get amount (map-get? TokenDeposits {user: tx-sender}))) amount),
                 deposit-height: block-height
+            }
+        )
+        (ok true)
+    )
+)
+
+(define-public (withdraw-tokens (token-trait <governance-token-trait>) (amount uint))
+    (let (
+        (token (unwrap! (var-get governance-token) ERR_TOKEN_NOT_SET))
+        (deposit (default-to {amount: u0, deposit-height: u0} (map-get? TokenDeposits {user: tx-sender})))
+    )
+        (asserts! (is-eq (contract-of token-trait) token) ERR_UNAUTHORIZED)
+        (asserts! (<= amount (get amount deposit)) ERR_WITHDRAWAL_AMOUNT_EXCEEDS_BALANCE)
+        (try! (as-contract (contract-call? token-trait transfer 
+            amount 
+            tx-sender 
+            tx-sender 
+            none)))
+        (map-set TokenDeposits 
+            {user: tx-sender}
+            {
+                amount: (- (get amount deposit) amount),
+                deposit-height: (get deposit-height deposit)
             }
         )
         (ok true)
@@ -174,11 +197,12 @@
             {id: proposal-id}
             (merge proposal {executed: true})
         )
-        (if (> for-votes against-votes)
-            (print proposal-id)
-            (print proposal-id)
-        )
+        (print {
+            proposal-id: proposal-id,
+            result: (if (> for-votes against-votes) "executed" "rejected"),
+            for-votes: for-votes,
+            against-votes: against-votes
+        })
         (ok true)
     )
 )
-
